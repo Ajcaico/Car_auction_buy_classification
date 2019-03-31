@@ -1,0 +1,572 @@
+---
+title: "Data Mining Final Project F18 - Don't Get Kicked(Kaggle)"
+author: "Alex Caico"
+date: "December 8, 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+##Business Problem and Data Introduction
+Used car dealers often make bad decisions when purchasing used cars at auctions.  Our project is to use the Don't Get Kicked competition dataset from Kaggle to help improve the decision making ability of used car dealers by decreasing their odds of purchasing a lemon vehicle.  The data includes 34 variables ranging from the Make and Model, size, price, and a binary variable stating whether the vehicle was considered a lemon.  A lemon is a vehicle that has unforeseen issues that result in the car not being able to be sold by the dealer.  These issues include odometer tampering, unexpected mechanical problems, or issues related to getting the vehicle title from the seller.  Lemons are very costly to dealers, as they have to somehow recover from the cost to transport the vehicle from the auction, repairs of any mechanical problems, and of course, the loss from being unable to resell the vehicle.
+
+Our goal is to predict lemons, and to provide a detailed analysis on the data and build a model that helps tell the story about vehicles at auction.  This will help dealers make better informed decisions and decrease the probability of buying a lemon.
+
+
+
+```{r,  include=FALSE }
+suppressMessages(library(tidymodels))
+car_data <- read.csv("training.csv", na.strings = c(""))
+```
+
+
+##Data Transformation
+
+Reviewing the variables available against the provided  Data Dicionary, dependent variable of interest is [IsBadBuy], which is a binary variable where '0' means the vehicle is a good buy (or in other words, NOT a lemon) and '1' means the vehicle is a bad buy (or in other words, a lemon). There are a few variables that are not relevant predictors of vehicle quality:[RefID], [PurchDate], [VehYear], [BYRNO], and [VehBCost].
+
+[RefID] is the "unique (sequential) number assigned to vehicles". This predicts nothing, but could be a good row name.
+[PurchDate] is the "date the vehicle was purchased at auction". This information is irrelevant since we want to predict whether a vehicle at auction is a lemon or not prior to submitting a bid for it. It could only be relevant if we believe that lemons are more likely to be sold during certain seasons of the year relative to other seasons. This is unlikely.
+[VehYear] is "the manufacturer's year of the vehicle". While this is relevant, a year is not a proper numerical value. It is ordered, but the year 2000 does not equate to an equivalent value from which predictions can be made. To address this limitation, the dataset has already included the [VehicleAge] which is simply the year of the auction minus the [VehYear]. This value is better for modeling than [VehYear], so [VehYear] is not needed.
+[BYRNO] is the "unique number assigned to the buyer that purchased the vehicle." This information is irrelevant for the same reason as the [PurchDate] since we want to predict whether an auctioned vehicle is a lemon before submitting a bid to buy. [VNZIP1] for zipcodes was removed since there were many unique values and there already is a variable for state. [WheelTypeID] 
+
+```{r data transformation}
+car_data$RefId=NULL
+car_data$PurchDate=NULL
+car_data$VehYear=NULL
+car_data$BYRNO=NULL
+car_data$VNZIP1=NULL
+car_data$WheelTypeID=NULL
+```
+
+
+#Missing values
+Conducting a quick analysis of null values as well as unique variable values reveals that no variable has nulls with the exception of [Trim], which has over 2000. Further, [Trim] has 135 unique values. Since the high number of unique values reduces [Trim]'s predictive power, and since it is unique in the number of nulls it contains, we opt to remove it completely from the dataset.
+```{r data transformation}
+
+suppressMessages(library(skimr))
+skimmed <- skim_to_wide(car_data)
+skimmed[, c(1:4, 6,7,9)]
+
+car_data$Trim=NULL
+
+```
+
+We grouped values that have similar meaning within certain variables, so there are less unique variable values and the values are more meaningful. 
+The regex operations below create and popoulate the following categorical variables: [Doors], [Type] (for car type), [Powertrain], and [Cyl] (for engine cylinders) variables. A few assumptions are taken:
+For [Doors], every car has four doors unless car_data$SubModel states otherwise.
+For [Type], every car is a 'PASSENGER' vehicle unless car_data$SubModel states otherwise.
+For [Powertrain], every car is a 'FWD' unless car_data$Model states otherwise.
+For [Cyl], every car has a 'V4' engine unless car_data$Model states otherwise.
+
+At the conclusion of running these regex operations, we delete the [Model] ad [SubModel] variables.
+
+```{r data transformation}
+suppressMessages(library(tidyverse))
+suppressMessages(library(DataExplorer))
+suppressMessages(library(ggplot2))
+
+#Changed IsBadBuy values to levels "GoodBuy" and "BadBuy"
+car_data <- car_data %>%
+  mutate(IsBadBuy = ifelse(IsBadBuy == 0, "GoodBuy", "BadBuy"))
+car_data$IsBadBuy <- as.factor(car_data$IsBadBuy)
+
+
+#Binary variable changed to be a factor
+car_data <- car_data %>%
+  mutate(IsOnlineSale = ifelse(IsOnlineSale == 0, "No", "Yes"))
+car_data$isOnlineSale <- as.factor(car_data$IsOnlineSale)
+
+
+car_data$Doors = "4D"
+car_data$Doors[grep("2d",car_data$SubModel,ignore.case=TRUE, fixed=FALSE)] = "2D"
+car_data$Doors[grep("5d",car_data$SubModel,ignore.case=TRUE, fixed=FALSE)] = "5D"
+car_data$Type = "PASSENGER"
+car_data$Type[grep("MINIVAN",car_data$SubModel,ignore.case=TRUE, fixed=FALSE)] = "MINIVAN"
+car_data$Type[grep("SUV",car_data$SubModel,ignore.case=TRUE, fixed=FALSE)] = "SUV"
+car_data$Type[grep("WAGON",car_data$SubModel,ignore.case=TRUE, fixed=FALSE)] = "WAGON"
+car_data$Type[grep("CARGO",car_data$SubModel,ignore.case=TRUE, fixed=FALSE)] = "CARGO"
+car_data$Type[grep("SEDAN",car_data$SubModel,ignore.case=TRUE, fixed=FALSE)] = "SEDAN"
+car_data$Type[grep("UTILITY",car_data$SubModel,ignore.case=TRUE, fixed=FALSE)] = "UTILITY"
+car_data$Type[grep("COUPE",car_data$SubModel,ignore.case=TRUE, fixed=FALSE)] = "COUPE"
+car_data$Type[grep("HATCHBACK",car_data$SubModel,ignore.case=TRUE, fixed=FALSE)] = "HATCHBACK"
+car_data$Type[grep("CROSSOVER",car_data$SubModel,ignore.case=TRUE, fixed=FALSE)] = "CROSSOVER"
+car_data$Type[grep("SUV-PICKUP",car_data$SubModel,ignore.case=TRUE, fixed=FALSE)] = "SUV-PICKUP"
+car_data$Powertrain = "FWD"
+car_data$Powertrain[grep("RWD",car_data$Model,ignore.case=TRUE, fixed=FALSE)] = "RWD"
+car_data$Powertrain = "2WD"
+car_data$Powertrain[grep("4WD",car_data$Model,ignore.case=TRUE, fixed=FALSE)] = "4WD"
+car_data$Cyl = "V4"
+car_data$Cyl[grep("V6",car_data$Model,ignore.case=TRUE, fixed=FALSE)] = "V6"
+car_data$Cyl[grep("V8",car_data$Model,ignore.case=TRUE, fixed=FALSE)] = "V8"
+car_data$Cyl[grep("V10",car_data$Model,ignore.case=TRUE, fixed=FALSE)] = "V10"
+car_data$Cyl[grep("V10",car_data$Model,ignore.case=TRUE, fixed=FALSE)] = "V12"
+car_data$Model=NULL
+car_data$SubModel=NULL
+car_data$PRIMEUNIT=NULL
+car_data$AUCGUART=NULL
+
+
+#Numerical data, which was read from csv as categorical. Changed to integers.
+car_data <- transform(car_data, MMRAcquisitionAuctionAveragePrice = as.integer(MMRAcquisitionAuctionAveragePrice), 
+                      MMRAcquisitionAuctionCleanPrice = as.integer(MMRAcquisitionAuctionCleanPrice),
+                      MMRAcquisitionRetailAveragePrice = as.integer(MMRAcquisitionRetailAveragePrice),
+                      MMRAcquisitonRetailCleanPrice = as.integer(MMRAcquisitonRetailCleanPrice), 
+                      MMRCurrentAuctionAveragePrice = as.integer(MMRCurrentAuctionAveragePrice),
+                      MMRCurrentAuctionCleanPrice	= as.integer(MMRCurrentAuctionCleanPrice),
+                      MMRCurrentRetailAveragePrice = as.integer(MMRCurrentRetailAveragePrice),
+                      MMRCurrentRetailCleanPrice = as.integer(MMRCurrentRetailCleanPrice)
+                      )
+
+```
+
+
+
+
+##Exploratory Data Analysis
+After initial data transformation, exploratory data analysis was conducted to further understand the data.
+
+```{r exploratory data analysis}
+car_data$Auction <- as.factor(car_data$Auction)
+car_data$Make <- as.factor(car_data$Make)
+car_data$Color <- as.factor(car_data$Color)
+car_data$Transmission <- as.factor(car_data$Transmission)
+car_data$Nationality <- as.factor(car_data$Nationality)
+car_data$Size <- as.factor(car_data$Size)
+car_data$TopThreeAmericanName <- as.factor(car_data$TopThreeAmericanName)
+car_data$VNST <- as.factor(car_data$VNST)
+car_data$Doors <- as.factor(car_data$Doors)
+car_data$Type <- as.factor(car_data$Type)
+car_data$Cyl <- as.factor(car_data$Cyl)
+
+print("MMRAcquisitionAuctionAveragePrice Summary:")
+summary(car_data$MMRAcquisitionAuctionAveragePrice)
+print("MMRAcquisitionAuctionCleanPrice Summary:")
+summary(car_data$MMRAcquisitionAuctionCleanPrice)
+print("MMRAcquisitionRetailAveragePrice Summary:")
+summary(car_data$MMRAcquisitionRetailAveragePrice)
+print("MMRAcquisitonRetailCleanPrice Summary:")
+summary(car_data$MMRAcquisitonRetailCleanPrice)
+print("MMRCurrentAuctionAveragePrice Summary:")
+summary(car_data$MMRCurrentAuctionAveragePrice)
+print("MMRCurrentAuctionCleanPrice Summary:")
+summary(car_data$MMRCurrentAuctionCleanPrice)
+print("MMRCurrentRetailAveragePrice Summary:")
+summary(car_data$MMRCurrentRetailAveragePrice)
+print("MMRCurrentRetailCleanPrice Summary:")
+summary(car_data$MMRCurrentRetailCleanPrice)
+```
+
+```{r}
+#Converting NULL values to NA
+car_data$Nationality[grep("NULL",car_data$Nationality,ignore.case=TRUE, fixed=FALSE)] = NA
+car_data$Transmission[grep("NULL",car_data$Transmission,ignore.case=TRUE, fixed=FALSE)] = NA
+
+plot_intro(car_data)
+plot_missing(car_data)
+
+row.has.na <- apply(car_data, 1, function(x){any(is.na(x))})
+car_data <- car_data[!row.has.na,]
+```
+
+
+
+Distribution of continuous variables
+```{r}
+plot_histogram(car_data, ggtheme = theme_classic())
+```
+
+```{r}
+table(car_data$IsBadBuy)
+percent_lemons <- round(length(car_data$IsBadBuy[car_data$IsBadBuy == "BadBuy"]) / length(car_data$IsBadBuy) * 100,2)
+cat("Percentage of Cars that are Lemons: ", percent_lemons, "%")
+```
+
+```{r }
+counts_age <- table(car_data$IsBadBuy, car_data$VehicleAge)
+barplot(counts_age, main="Lemon Distribution by Vehicle Age",
+  xlab="Vehicle Age", col=c("#ff9999","#00ffcc"), border=NA,
+ 	legend = rownames(counts_age))
+```
+```{r}
+counts_age <- table(car_data$IsBadBuy, car_data$Nationality)
+p <- barplot(counts_age, main="Lemon Distribution by Car Nationality",
+  xlab="Nationality", col=c("#33ccff","#00ffcc"), border=NA, horiz = TRUE,
+ 	legend = rownames(counts_age))
+```
+
+```{r}
+counts <- table(car_data$IsBadBuy, car_data$Auction)
+p <- barplot(counts, main="Lemon Distribution by Auction",
+  xlab="Transmission", col=c("#33ccff","#ff9999"), border=NA, 
+ 	legend = rownames(counts), beside=TRUE)
+
+```
+
+```{r}
+boxplot(MMRAcquisitionAuctionAveragePrice~IsOnlineSale,data=car_data, main="Vehicle Acquisition Cost by Online Sale", 
+    xlab="Is Online Sale", ylab="Vehicle Acquisition Cost")
+```
+
+
+
+```{r}
+p <- ggplot(car_data, aes(factor(TopThreeAmericanName), VehBCost))
+p + geom_violin(aes(fill = factor(TopThreeAmericanName)), trim = FALSE) 
+```
+
+```{r}
+ggplot(car_data, aes(x=MMRAcquisitionAuctionAveragePrice, fill = Doors, alpha = I(0.4))) + geom_density()
+```
+
+```{r}
+pie(table(car_data$VNST), main = "Total Cars Sold by State")
+```
+
+
+```{r}
+plot_correlation(car_data, type = 'continuous')
+```
+
+##Splitting data between training and testing
+Test data is not used during training, so the final model can be assessed with test data that the model hasn't seen before
+```{r}
+set.seed(4595)
+data_split <- initial_split(car_data)
+car_train <- training(data_split)
+car_test  <- testing(data_split)
+nrow(car_train)/nrow(car_data)
+```
+
+
+##Recipe Creation
+```{r}
+
+car_recipe <- recipe(IsBadBuy~., data=car_train) %>%
+   step_center(all_numeric()) %>%
+   step_scale(all_numeric())  
+
+
+car_train_prep <- prep(car_recipe, training=car_train, retain=TRUE, verbose=TRUE)
+car_train_baked <- bake(car_train_prep,car_train)
+```
+
+
+##Modeling Method
+The exploratory data analysis shows that we are attempting to predict a bivaraite classification problem and that there is a skewed distribution of the values of the target variable. There is 12.3% "BadBuys" in the overall data. It is more important to correctly to predict "BadBuys". To account for this, we used down sampling and true class probs when training the model. 
+Several models are being assessed for this bivariate classification problem
+-CART
+-Bagged CART
+-Naive Bayes
+-GCV MARS Earth
+-Bagged Logic Regression
+
+
+Tuning Parameters for models to be assessed
+```{r}
+suppressMessages(library(caret))
+modelLookup('rpart2')
+modelLookup('nb')
+modelLookup('treebag')
+modelLookup('gcvEarth')
+modelLookup('logicBag')
+
+```
+
+
+## Train Control and Tune Grids for All Models
+```{r}
+
+
+ctrl <- trainControl(
+  method = "cv",
+ 
+  classProbs = TRUE, 
+  summaryFunction = twoClassSummary,
+  savePredictions = "final",
+  sampling = "down"
+)
+
+cart_grid <- expand.grid(
+  data.frame(maxdepth = 1:10)
+)
+
+
+nb_smoothing_grid <- expand.grid(
+  usekernel = TRUE, 
+  fL = 0, 
+  adjust = seq(2.0, 5.0, by = 0.5)
+)
+
+
+logic_grid = expand.grid(
+   nleaves=20,
+   ntrees=60)
+
+logic_ctrl <- trainControl(
+   method = "cv",
+   classProbs = TRUE,
+   verboseIter = TRUE,
+   summaryFunction = twoClassSummary,
+   savePredictions = "final",
+   sampling = "down"
+)
+
+
+```
+
+
+
+## Model Training & Performance Assessment
+
+CART Model
+```{r}
+suppressMesssages(library(pROC))
+
+cart_mod <- train(
+  car_recipe, 
+  data = car_train,
+  method = "rpart2", 
+  metric = "ROC", 
+  tuneGrid = cart_grid, 
+  trControl = ctrl
+)
+
+#Model Stats
+cart_mod
+confusionMatrix(cart_mod)
+ggplot(cart_mod) + theme(legend.position = "top")
+
+#Create plot ROC function
+plot_roc <- function(x, ...){
+  roc_obj <- roc(
+    response = x[["obs"]],
+    predictor = x[["BadBuy"]],
+    levels = rev(levels(x$obs))
+  )
+  plot(roc_obj, ...)
+}
+
+#Plot ROC
+plot_roc(cart_mod$pred)
+
+#Variable Importance
+cart_imp <- varImp(cart_mod, scale = FALSE, 
+                   surrogates = FALSE, 
+                   competes = FALSE)
+ggplot(cart_imp, top = 10) + xlab("")
+
+```
+
+Bagged CART (treebag)
+```{r}
+
+cart_bagged_mod <- train(
+  car_recipe, 
+  data = car_train,
+  method = "treebag", 
+  metric = "ROC", 
+  trControl = ctrl
+
+)
+
+#Model Stats
+cart_bagged_mod
+confusionMatrix(cart_bagged_mod)
+
+#Plot ROC
+plot_roc(cart_bagged_mod$pred)
+
+#Variable Importance
+cart_bagged_imp <- varImp(cart_bagged_mod, scale = FALSE)
+ggplot(cart_bagged_imp, top = 15) + xlab("")
+
+```
+```{r parallel, include = FALSE}
+library(doParallel)
+parallel::detectCores(logical = TRUE)
+cl <- makeCluster(4)
+registerDoParallel(cl)
+```
+
+
+Naive Bayes
+```{r}
+nb_mod <- train(
+  car_recipe, 
+  data = car_train, 
+  method = "nb", 
+  metric = "ROC", 
+  tuneGrid = nb_smoothing_grid, 
+  trControl = ctrl
+)
+
+#Model Stats
+nb_mod
+confusionMatrix(nb_mod)
+ggplot(nb_mod) + theme(legend.position = "top")
+
+#Plot ROC 
+plot_roc(nb_mod$pred)
+
+#Variable Importance
+nb_imp <- varImp(nb_mod, scale = FALSE, 
+                   surrogates = FALSE, 
+                   competes = FALSE)
+ggplot(nb_imp, top = 15) + xlab("")
+```
+
+
+Logistics Regression
+```{r}
+# library(LogicReg)
+# library(mcbiopi)
+# library(logicFS)
+# 
+# set.seed(5515)
+# logic_mod = train(
+#  #  car_recipe,
+#    data = car_train_baked,
+#    x = car_train_baked[, names(car_train_baked) == "Auction_MANHEIM"],
+#    y = car_train_baked$IsBadBuy_GoodBuy,
+#    method = "logicBag",
+#    metric = "ROC",
+#    tuneGrid = logic_grid,
+#    trControl = logic_ctrl
+# )
+
+##Errors with logic bag that we couldn't resolve
+
+```
+
+
+GCV MARS
+```{r}
+library(earth)
+set.seed(3544)
+mars_gcv_mod <- train(
+  car_recipe, 
+  data = car_train,
+  method = "gcvEarth",
+  tuneGrid = data.frame(degree = 1:2),
+  metric = "ROC",
+  trControl = ctrl
+)
+
+mars_gcv_mod$finalModel
+mars_gcv_mod
+confusionMatrix(mars_gcv_mod)
+ggplot(mars_gcv_mod) + theme(legend.position = "top")
+plot_roc(mars_gcv_mod$pred)
+
+```
+
+
+
+##Model Comparisons with TidyPosterior
+```{r}
+suppressMessages(library(tidyposterior))
+rs <- resamples(
+  list(CART = cart_mod, Bagged = cart_bagged_mod, Bayes = nb_mod, GCV = mars_gcv_mod )
+)
+
+suppressMessages(roc_mod <- perf_mod(rs, seed = 2560, iter = 5000))
+
+differences <- contrast_models(
+  roc_mod, 
+  list_1 = c("Bagged", "Bagged", "Bagged", "GCV", "GCV", "CART"),
+  list_2 = c("Bayes", "GCV", "CART", "Bayes", "CART", "Bayes"),
+  seed = 650
+)
+
+roc_dist <- tidy(roc_mod)
+summary(roc_dist)
+summary(differences, size = 0.025)
+
+
+differences %>%
+  mutate(contrast = paste(model_2, "vs", model_1)) %>%
+  ggplot(aes(x = difference, col = contrast)) +
+  geom_line(stat = "density") +
+  geom_vline(xintercept = c(-0.025, 0.025), lty = 2)
+
+
+plot_roc(cart_mod$pred)
+plot_roc(cart_bagged_mod$pred, col = "red", add = TRUE)
+plot_roc(nb_mod$pred, col = "blue", add = TRUE)
+plot_roc(mars_gcv_mod$pred, col = "green", add = TRUE)
+
+
+```
+
+
+Model Comparison Result:
+Tidyposterior compares the differences in model statistics through resampling. The results of the resampling is used to get parameter estimates for each model's effect on the resampled ROC values and make statistical significant comparisons between models. 
+
+The results show that GCV Earth perform better than the other models by a statiscally significant amount with a mean ROC score of 0.74595. There is a low pract_equiv score when comparing GCV to other models, meaning that the other models are not statistically similiar to GCV Earth
+
+
+
+
+##Predicting on the Test Set
+```{r}
+suppressMessages(library(e1071))
+suppressMessages(library(caTools))
+suppressMessages(library(scales))
+
+test_res <- car_test %>%
+  dplyr::select(IsBadBuy) %>%
+  mutate(
+    prob = predict(mars_gcv_mod, car_test, type = "prob")[,"BadBuy"],
+    pred = predict(mars_gcv_mod, car_test)
+  )
+
+roc_curve <- roc(test_res$IsBadBuy, test_res$prob, levels = c("GoodBuy", "BadBuy"))
+
+getTrainPerf(mars_gcv_mod)
+
+
+plot(
+    roc_curve,
+    legacy.axes = TRUE,
+    print.thres = c(.2, .5, .8), 
+    print.thres.pattern = "cut = %.2f (Sp = %.3f, Sn = %.3f)",
+    print.thres.cex = .8
+)
+
+car_test_predict <- predict(mars_gcv_mod, car_test)
+cfm <- confusionMatrix(car_test_predict, car_test$IsBadBuy)
+cfm
+
+
+ggplotConfusionMatrix <- function(m){
+  mytitle <- paste("Accuracy", percent_format()(m$overall[1]),
+                   "Kappa", percent_format()(m$overall[2]))
+  p <-
+    ggplot(data = as.data.frame(m$table) ,
+           aes(x = Reference, y = Prediction)) +
+    geom_tile(aes(fill = log(Freq)), colour = "white") +
+    scale_fill_gradient(low = "white", high = "steelblue") +
+    geom_text(aes(x = Reference, y = Prediction, label = Freq)) +
+    theme(legend.position = "none") +
+    ggtitle(mytitle)
+  return(p)
+}
+
+ggplotConfusionMatrix(cfm)
+
+
+```
+
+
+Evaluation of Test Set:
+We have selected GCVearth as the best performing model from the training and cross validation. 
+We have predicted the test data on this model. The model correctly predicted 1,492 Lemons ("Badbuy") out of 2,235 lemons (67%)
+The model also incorrectly predicted good buys as Lemons 5,229 out of 16,007 good buys (33%).
+
+Implementation
+This model could be integrated with a software application that would allow car dealers to send a request with specifc car details at an auction, so then the model could return a response whether it predicts the car to be a lemon or not. The user should use this response as an indicator to ask the auctioneer for more information or conduct additional inspection of the car before buying to ensure it is not a lemon. 
+After car dealers have bought a car and determined whether or not it was a lemon, they should enter this new data in the application and the models should be re-trained with this additional data, so the models could continuously learn overtime and detect any new trends in the data. 
+
+
+
